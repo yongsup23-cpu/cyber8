@@ -2550,11 +2550,25 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
     geometry.setAttribute("uv", new THREE.BufferAttribute(new Uint16Array(parts[1].buffer), 2, true));
     geometry.setAttribute("normal", new THREE.BufferAttribute(new Int8Array(parts[2].buffer), 3, true));
     geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(parts[3].buffer), 1));
-    const texture = await new Promise((resolve,reject) => {
-      const url = URL.createObjectURL(new Blob([parts[4]], {type:"image/jpeg"}));
-      new THREE.TextureLoader().load(url, t => { URL.revokeObjectURL(url); t.flipY=false; t.encoding=THREE.sRGBEncoding; t.anisotropy=ANISO; resolve(t); }, undefined, reject);
+    const loadModelTexture = (part, color) => new Promise((resolve,reject) => {
+      const url = URL.createObjectURL(new Blob([part], {type:"image/jpeg"}));
+      new THREE.TextureLoader().load(url, t => { URL.revokeObjectURL(url); t.flipY=false; t.encoding=color ? THREE.sRGBEncoding : THREE.LinearEncoding; t.anisotropy=ANISO; resolve(t); }, undefined, e => { URL.revokeObjectURL(url); reject(e); });
     });
-    taxiDecoded = { geometry, texture }; return taxiDecoded;
+    const [texture, surface, normal] = await Promise.all([loadModelTexture(parts[4],true),loadModelTexture(parts[5],false),loadModelTexture(parts[6],false)]);
+    taxiDecoded = { geometry, texture, surface, normal }; return taxiDecoded;
+  }
+  let taxiEnv = null;
+  function taxiEnvironment() {
+    if (taxiEnv) return taxiEnv;
+    // Reflections of broad studio lights give the car body and chrome definition.
+    const faces = Array.from({length:6},(_,i)=>{
+      const c=document.createElement("canvas"); c.width=256; c.height=256;
+      const g=c.getContext("2d"); const bg=g.createLinearGradient(0,0,0,256);
+      bg.addColorStop(0,"#777b7c"); bg.addColorStop(0.44,"#454748"); bg.addColorStop(1,"#17191a"); g.fillStyle=bg; g.fillRect(0,0,256,256);
+      if(i!==3){g.fillStyle="rgba(255,248,232,.70)"; g.fillRect(i%2?28:168,20,38,135); g.fillStyle="rgba(255,255,255,.30)"; g.fillRect(72,25,10,120);}
+      return c;
+    });
+    taxiEnv=new THREE.CubeTexture(faces); taxiEnv.encoding=THREE.sRGBEncoding; taxiEnv.needsUpdate=true; return taxiEnv;
   }
   function buildCar() {
     const top=0.16, radius=2.55;
@@ -2568,10 +2582,14 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
     const sh=plane(4.5,2.2,new THREE.MeshBasicMaterial({map:softTex,transparent:true,depthWrite:false,opacity:0.85})); sh.rotation.x=-Math.PI/2; sh.position.set(C.x,top+0.008,C.z); world.add(sh);
     const holder=new THREE.Group(); holder.position.set(C.x,top,C.z); world.add(holder); CAR.A=null; CAR.B=null; CAR.holder=holder;
     const proxy=new THREE.Mesh(new THREE.BoxGeometry(4.3,1.75,1.85),new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false})); proxy.position.y=0.87; proxy.userData.idx="car"; holder.add(proxy); pickables.push(proxy);
+    const ambient=new THREE.HemisphereLight(0xe7ecf4,0x45403b,0.85); world.add(ambient);
+    const key=new THREE.DirectionalLight(0xfff2db,1.15); key.position.set(C.x-3,5,C.z-4); world.add(key);
+    const fill=new THREE.DirectionalLight(0xe6efff,0.55); fill.position.set(C.x+3,3,C.z+2); world.add(fill);
     const expectedWorld=world;
-    decodeTaxi().then(({geometry,texture})=>{
+    decodeTaxi().then(({geometry,texture,surface,normal})=>{
       if(world!==expectedWorld || mode!=="lobby") return;
-      const mat=new THREE.MeshBasicMaterial({map:texture,side:THREE.DoubleSide});
+      // Original GLB PBR textures: blue = metalness, green = roughness.
+      const mat=new THREE.MeshStandardMaterial({map:texture, metalness:1, roughness:1, metalnessMap:surface, roughnessMap:surface, normalMap:normal, normalScale:new THREE.Vector2(0.65,0.65), envMap:taxiEnvironment(), envMapIntensity:0.8, side:THREE.DoubleSide});
       const mesh=new THREE.Mesh(geometry.clone(),mat); const scale=4.15/1.90101;
       mesh.scale.setScalar(scale); mesh.position.y=0.379509*scale+0.012;
       holder.add(mesh);
