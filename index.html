@@ -2537,9 +2537,11 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
   let taxiDecoded = null;
   async function decodeTaxi() {
     if (taxiDecoded) return taxiDecoded;
-    const response = await fetch("assets/taxi-model.bin");
-    if (!response.ok) throw new Error("택시 모델 파일을 불러오지 못했습니다: " + response.status);
-    const raw = new Uint8Array(await response.arrayBuffer());
+    const responses = await Promise.all(["assets/taxi-model-1.bin", "assets/taxi-model-2.bin"].map(path => fetch(path)));
+    if (responses.some(response => !response.ok)) throw new Error("택시 모델 파일을 불러오지 못했습니다.");
+    const buffers = await Promise.all(responses.map(response => response.arrayBuffer()));
+    const raw = new Uint8Array(buffers[0].byteLength + buffers[1].byteLength);
+    raw.set(new Uint8Array(buffers[0]), 0); raw.set(new Uint8Array(buffers[1]), buffers[0].byteLength);
     const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream("gzip"));
     const all = new Uint8Array(await new Response(stream).arrayBuffer());
     let at = 0; const parts = TAXI_PARTS.map(n => { const part = all.slice(at, at+n); at += n; return part; });
@@ -2573,7 +2575,7 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
       const mesh=new THREE.Mesh(geometry.clone(),mat); const scale=4.15/1.90101;
       mesh.scale.setScalar(scale); mesh.position.y=0.379509*scale+0.012;
       holder.add(mesh);
-    }).catch(err=>{console.error("택시 모델 로딩 실패",err); document.getElementById("taxiNotice").textContent="택시 모델을 불러오지 못했습니다. assets/taxi-model.bin 파일을 확인해 주세요."; document.getElementById("taxiNotice").hidden=false;});
+    }).catch(err=>{console.error("택시 모델 로딩 실패",err); document.getElementById("taxiNotice").textContent="택시 모델을 불러오지 못했습니다. assets 폴더의 taxi-model-1.bin과 taxi-model-2.bin 파일을 확인해 주세요."; document.getElementById("taxiNotice").hidden=false;});
     const label=panelMesh({kicker:"1946 · 창업 택시",title:"광주택시",text:"창업의 시작을 담은 택시를 3D로 재현했습니다."},1.7);
     onWall(label,2,-C.x,3.35-label.userData.h/2,0.02);
     return {kind:"art",car:true,data:CAR.data,pose:carPose};
