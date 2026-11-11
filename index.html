@@ -231,7 +231,7 @@ body.t3on .viewport{position:fixed;inset:0;z-index:12}body.t3on #t3d{background:
 #soundBtn .i{display:inline-block;width:14px;text-align:center}
 #soundBtn[aria-pressed=false] .i{opacity:.55;text-decoration:line-through}
 #soundBtn .t{margin-left:4px}
-#gyroBtn,#airBtn2{white-space:nowrap}
+#gyroBtn,#airBtn2{white-space:nowrap}@media (min-width:701px){#airBtn2{display:none!important}}
 .look,#chips,.roomname{z-index:2}
 .look #soundBtn[aria-pressed=true],.look #gyroBtn[aria-pressed=true]{background:#3a3326;border-color:var(--gold);color:var(--gold)}
 .pinplay .nmk2{animation:pinRise .8s cubic-bezier(.22,1.45,.4,1) both;animation-delay:250ms}
@@ -10459,7 +10459,7 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
       document.head.appendChild(st); f = document.createElement("button"); f.type = "button"; f.id = "airFab"; document.body.appendChild(f);
       f.addEventListener("click", (e) => { e.stopPropagation(); setAir(!AIR.on); }); ["pointerdown", "pointerup"].forEach((ev) => f.addEventListener(ev, (e) => e.stopPropagation())); }
     f.classList.remove("on"); const a2 = $("airBtn2"); if (a2) { a2.hidden = mode !== "outside"; a2.textContent = AIR.on ? "↩ 지상으로" : "✈ 항공뷰"; }
-    const b = $("skyChip") && $("skyChip").querySelector(".air"); if (!b) return; b.hidden = true; }
+    const b = $("skyChip") && $("skyChip").querySelector(".air"); if (!b) return; b.hidden = mode !== "outside"; b.textContent = AIR.on ? "↩ 지상으로" : "✈ 항공뷰"; }   // computers and pads: under the time-of-day chip
   function setAir(on) {
     if (mode !== "outside" || busy || on === AIR.on || AIR.out) return;
     anim = null; hold = null; if (auto.on) setAuto(false); VK.v = 0;
