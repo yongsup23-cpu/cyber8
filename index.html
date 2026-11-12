@@ -10583,24 +10583,39 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
       o.traverse((m) => { if (m.isMesh) { const mp = m.material && m.material.map; m.material = new THREE.MeshLambertMaterial({ map: mp, skinning: true }); m.castShadow = true; m.frustumCulled = false; } });
       const blob = new THREE.Mesh(new THREE.CircleGeometry(0.42, 24), new THREE.MeshBasicMaterial({ map: canvasTex(64, 64, (c, W, H) => { const gr = c.createRadialGradient(32, 32, 2, 32, 32, 32); gr.addColorStop(0, "rgba(0,0,0,0.55)"); gr.addColorStop(0.6, "rgba(0,0,0,0.25)"); gr.addColorStop(1, "rgba(0,0,0,0)"); c.fillStyle = gr; c.fillRect(0, 0, W, H); }), transparent: true, depthWrite: false }));
       blob.rotation.x = -Math.PI / 2; blob.renderOrder = 2; TP.blob = blob; blob.visible = false; scene.add(blob);   // a soft contact shadow: the street's shadow map is baked once, so a moving figure needs its own
-      TP.obj = o; o.visible = false; scene.add(o); TP.mixer = new THREE.AnimationMixer(o); g.animations.forEach((c) => { TP.act[c.name] = TP.mixer.clipAction(c); });
+      TP.obj = o; o.visible = false; scene.add(o);
+      gltfLoader.load("assets/character-stand.glb", (g2) => {   // optional: without it the walking figure simply stands still
+        const sw = new THREE.Group(), m2 = g2.scene, b = new THREE.Box3().setFromObject(m2), k = 1.344 / (b.max.y - b.min.y);
+        m2.traverse((m) => { if (m.isMesh) { m.material = new THREE.MeshLambertMaterial({ map: m.material && m.material.map }); m.castShadow = true; } });
+        m2.scale.setScalar(k); m2.position.set(-(b.min.x + b.max.x) / 2 * k, -b.min.y * k, -(b.min.z + b.max.z) / 2 * k); sw.add(m2); sw.visible = false; scene.add(sw); TP.stand = sw;
+      }, undefined, () => {}); TP.mixer = new THREE.AnimationMixer(o); g.animations.forEach((c) => { TP.act[c.name] = TP.mixer.clipAction(c); });
     }, undefined, (e) => { TP.loading = false; TP.fail = true; tpLabel(); console.error("캐릭터 모형 로딩 실패 (assets/character.glb)", e); });
   }
   function tpStep(dt) {
-    const show = TP.on && mode === "outside" && !AIR.on && !(AIR.p > 0.02) && !THUMB.on && !T3.on && !SWING && !HOOP;   // the swing and the hoop game stay first-person
+    const show = TP.on && mode === "outside" && !AIR.on && !AIR.out && !THUMB.on && !T3.on && !SWING && !HOOP;   // the swing and the hoop game stay first-person
     if (show && !TP.obj) tpLoad();
     TP.k += ((show && TP.obj ? 1 : 0) - TP.k) * Math.min(1, dt * 5); if (TP.k < 0.002) TP.k = 0;
-    if (!TP.obj) return; TP.obj.visible = TP.k > 0.05; TP.blob.visible = TP.obj.visible;
+    if (!TP.obj) return; const vis = TP.k > 0.05; TP.blob.visible = vis;
     let mv = Math.hypot(cam.x - TP.px, cam.z - TP.pz) / Math.max(dt, 1e-3); TP.px = cam.x; TP.pz = cam.z; if (mv > 30) mv = 0;   // a jump (entering, aerial return) is not a sprint
-    TP.spd += (mv - TP.spd) * Math.min(1, dt * 7);
-    if (!TP.obj.visible) return;
-    TP.obj.position.set(cam.x, 0, cam.z); TP.obj.rotation.y = cam.yaw + Math.PI; TP.blob.position.set(cam.x, 0.04, cam.z);
+    TP.spd += (mv - TP.spd) * Math.min(1, dt * 7); TP.still = TP.spd < 0.3 ? (TP.still || 0) + dt : 0;
+    const st = !!TP.stand && TP.still > 0.15;   // standing: the unrigged model, whose shirt logo and bag picture stay flat and sharp
+    TP.obj.visible = vis && !st; if (TP.stand) TP.stand.visible = vis && st;
+    if (!vis) return;
+    if (TP.rot && (TP.spd > 0.3 || TP.k < 0.9)) { TP.rot = wrapAngle(TP.rot); TP.rot -= TP.rot * Math.min(1, dt * 5); if (Math.abs(TP.rot) < 0.01) TP.rot = 0; }   // walking off: turn back to face the way you go
+    TP.obj.position.set(cam.x, 0, cam.z); TP.obj.rotation.y = cam.yaw + Math.PI + (TP.rot || 0); TP.blob.position.set(cam.x, 0.04, cam.z);
+    if (TP.stand) { TP.stand.position.set(cam.x, 0, cam.z); TP.stand.rotation.y = TP.obj.rotation.y; }
     const W = TP.act.Walking, R = TP.act.Running; if (!W || !R) return;
     if (!TP.started) { TP.started = true; W.play(); R.play(); }
     TP.rw += ((TP.spd > 4.2 ? 1 : 0) - TP.rw) * Math.min(1, dt * 6); W.setEffectiveWeight(1 - TP.rw); R.setEffectiveWeight(TP.rw);
     const moving = TP.spd > 0.3; W.timeScale = moving ? Math.max(0.7, Math.min(1.9, TP.spd / 1.5)) : 0; R.timeScale = Math.max(0.8, Math.min(1.6, TP.spd / 5));
     if (!moving) W.time += (0.53 - W.time) * Math.min(1, dt * 6);   // standing still: ease the walk cycle to the feet-together frame
     TP.mixer.update(dt);
+  }
+  function tpHit(px, py) {   // is the pointer on the character? (its screen-space box, from feet to head)
+    if (!TP.obj || TP.k < 0.6) return false; const r = canvas.getBoundingClientRect(), v = new THREE.Vector3();
+    const sc = (y) => { v.set(cam.x, y, cam.z).project(camera); return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height, v.z]; };
+    const f = sc(0), h = sc(1.4); if (f[2] > 1 || h[2] > 1) return false; const ht = f[1] - h[1], hw = ht * 0.32;
+    return px > f[0] - hw && px < f[0] + hw && py > h[1] - ht * 0.05 && py < f[1] + ht * 0.04;
   }
   function tpCamera() {   // after the eye camera is placed: pull it back behind and above the character, shortened where it would end up inside a wall
     if (!TP.k) return; let d = 4.2; for (const t of [4.2, 3.4, 2.6, 1.8]) { const bx = cam.x + Math.sin(cam.yaw) * t, bz = cam.z + Math.cos(cam.yaw) * t, c = clampXZ(bx, bz, 0.4); d = t; if (Math.hypot(c[0] - bx, c[1] - bz) < 0.05) break; }
@@ -10722,10 +10737,11 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
     }
     const target = (!atEasel && (mode === "lobby" || mode === "hall")) ? hit(e.clientX,e.clientY) : null;
     drag = { x0: e.clientX, y0: e.clientY, lx: e.clientX, ly: e.clientY, moved: 0, taxi: !!(mode === "lobby" && target && target.userData.idx === "car" && CAR.holder),
-      dio: !!(mode === "hall" && target && (target.userData.idx === "dio" || target.userData.idx === "dioItem") && DIO.holder && DIO.holder.parent) };
+      dio: !!(mode === "hall" && target && (target.userData.idx === "dio" || target.userData.idx === "dioItem") && DIO.holder && DIO.holder.parent),
+      tp: mode === "outside" && !AIR.on && tpHit(e.clientX, e.clientY) };   // pressed on the character: drag sideways to turn it round
     clearTimeout(holdTimer);
     holdTimer = setTimeout(() => {
-      if (!drag || AIR.on || AIR.out || drag.dio || drag.moved > 8 || touches.size !== 1 || atEasel || busy || (mode !== "hall" && mode !== "outside")) return;   // press and hold to run: in the halls and out on the street
+      if (!drag || AIR.on || AIR.out || drag.dio || drag.tp || drag.moved > 8 || touches.size !== 1 || atEasel || busy || (mode !== "hall" && mode !== "outside")) return;   // press and hold to run: in the halls and out on the street
       hold = { x: drag.lx, y: drag.ly, v: 0 }; anim = null; looked = true;
       if (auto.on) setAuto(false);
       canvas.style.cursor = "move";
@@ -10740,7 +10756,7 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
     }
     if (hold) { hold.x = e.clientX; hold.y = e.clientY; return; }
     if (!drag && mode === "hall" && e.pointerType === "mouse") { const o = hit(e.clientX, e.clientY); if (o && o.userData.thumbOf !== undefined && thumbFront()) { thumbHover(o); return; } thumbHover(null); if (o && (o.userData.screen || o.userData.thumbOf !== undefined)) { canvas.style.cursor = "pointer"; return; } }
-    if (!drag) { if (e.pointerType === "mouse") canvas.style.cursor = hit(e.clientX, e.clientY) ? "pointer" : "crosshair"; return; }
+    if (!drag) { if (e.pointerType === "mouse") canvas.style.cursor = mode === "outside" && tpHit(e.clientX, e.clientY) ? "grab" : hit(e.clientX, e.clientY) ? "pointer" : "crosshair"; return; }
     const dx = e.clientX - drag.lx, dy = e.clientY - drag.ly;
     drag.moved = Math.max(drag.moved, Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0));
     if (drag.dio && drag.moved > 6) {
@@ -10751,6 +10767,7 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
       }
       drag.lx = e.clientX; drag.ly = e.clientY; return;
     }
+    if (drag.tp) { if (drag.moved > 3) { TP.rot = (TP.rot || 0) + dx * 0.012; canvas.style.cursor = "grabbing"; } drag.lx = e.clientX; drag.ly = e.clientY; return; }
     if (drag.taxi && drag.moved > 6 && CAR.holder) {
       CAR.holder.rotation.y += dx * 0.005; CAR.rotT = CAR.holder.rotation.y;
       drag.lx=e.clientX; drag.ly=e.clientY; return;
@@ -10772,6 +10789,7 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
     if (!drag) return;
     const d = drag; drag = null;
     if (atEasel) { if (!cancel && d.moved <= 8) enterArchive(); return; }
+    if (d.tp) { canvas.style.cursor = ""; return; }   // turning the character is not a step
     if (AIR.on || AIR.out) return;   // no walking off from the sky
     if (HOOP && !cancel && d.moved <= 8) { hoopShoot(); return; }   // during the game a click shoots
     if (auto.on) setAuto(false);
