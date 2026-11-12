@@ -4645,13 +4645,29 @@ window.MeshoptDecoder=MeshoptDecoder;</script>
   const TANS = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(-1, 0, 0), new THREE.Vector3(0, 0, -1)];
   function tanOf(side, u) { if (!RT) return TANS[side]; const a = psiOf(side, u), k = side === 4 ? -1 : 1; return new THREE.Vector3(k * Math.cos(a), 0, k * Math.sin(a)); }
   function inGap(a, pad) { return Math.abs(wrapAngle(a - DA)) < IGAP - (pad || 0) / RI; }
+  // solid things outside: tree trunks plus every free-standing object of the street and the park (benches, lamps, play equipment, sculptures,
+  // fences, hedges), taken from their bounding boxes. Floors, overhead parts, hidden click-targets and the big merged/instanced meshes are left out.
+  function colBuild() {
+    OUT.colDirty = false; const L = (OUT.treeCols || []).slice(), bb = new THREE.Box3(); world.updateMatrixWorld(true);
+    const visible = (o) => { for (let q = o; q; q = q.parent) if (!q.visible) return false; return true; };
+    world.traverse((o) => { if (!o.isMesh || o.isInstancedMesh || o.isSkinnedMesh || !o.geometry || o.userData.idx || o.userData.noCol) return;
+      const m = Array.isArray(o.material) ? o.material[0] : o.material; if (m && m.transparent && m.opacity < 0.5) return; if (!visible(o)) return;
+      if (!o.geometry.boundingBox) o.geometry.computeBoundingBox(); bb.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld);
+      const w = bb.max.x - bb.min.x, d = bb.max.z - bb.min.z; if (bb.max.y < 0.4 || bb.min.y > 1.9) return;
+      if (!(Math.max(w, d) < 14 || (Math.min(w, d) < 0.9 && Math.max(w, d) < 60))) return; if (w * d > 120) return;
+      L.push([bb.min.x, bb.max.x, bb.min.z, bb.max.z]); });
+    const G = new Map(); L.forEach((w) => { for (let i = Math.floor((w[0] - 0.3) / 8); i <= Math.floor((w[1] + 0.3) / 8); i++) for (let j = Math.floor((w[2] - 0.3) / 8); j <= Math.floor((w[3] + 0.3) / 8); j++) { const k = i + "," + j; if (!G.has(k)) G.set(k, []); G.get(k).push(w); } });
+    OUT.colGrid = G; OUT.colN = L.length;
+  }
   function clampXZ(x, z, m) {
     if (mode === "outside") {   // across the road and on past the trees; the bus shelter's glass is solid
       const okA = (a, b) => (a >= -58 && a <= 58 && b >= -60 && b <= HZ - 0.9) || (a >= -44 && a <= 150 && b <= -14 && b >= -162) || (a >= -58 && a <= 300 && b >= -15 && b <= 9 && (a <= 150 || b >= -12)) || ((a - 240) * (a - 240) + (b + 36) * (b + 36) < 441 && b <= -11 && a >= 228) || (a >= 228 && a <= 260 && b <= -11 && b >= -20);   // the street, the park, the walk down the street and into U-square's plaza   // the street, and the whole of the ARTSIS park
       if (!okA(x, z)) { if (okA(x, cam.z)) z = cam.z; else if (okA(cam.x, z)) x = cam.x; else if (okA(cam.x, cam.z)) { x = cam.x; z = cam.z; }
         else { let f = null; for (let r = 0.25; r <= 16 && !f; r += 0.25) for (let k = 0; k < 24; k++) { const a = k / 24 * Math.PI * 2, px = x + Math.cos(a) * r, pz = z + Math.sin(a) * r; if (okA(px, pz)) { f = [px, pz]; break; } }   // off the walkable ground: step to the nearest walkable spot, never a jump across the map
           if (f) { x = f[0]; z = f[1]; } else { x = Math.max(-58, Math.min(58, x)); z = Math.max(-60, Math.min(HZ - 0.9, z)); } } }
-      const hit = (a, b) => (OUT.walls || []).some((w) => a > w[0] - 0.3 && a < w[1] + 0.3 && b > w[2] - 0.3 && b < w[3] + 0.3) || !!(OUT.mazeHit && OUT.mazeHit(a, b));
+      if (OUT.colDirty) colBuild(); const G = OUT.colGrid;
+      const inB = (w, a, b) => a > w[0] - 0.3 && a < w[1] + 0.3 && b > w[2] - 0.3 && b < w[3] + 0.3;
+      const hit = (a, b) => (OUT.walls || []).some((w) => inB(w, a, b)) || !!(OUT.mazeHit && OUT.mazeHit(a, b)) || !!(G && (G.get(Math.floor(a / 8) + "," + Math.floor(b / 8)) || []).some((w) => inB(w, a, b)));
       if (hit(x, z) && !hit(cam.x, cam.z)) { if (!hit(x, cam.z)) z = cam.z; else if (!hit(cam.x, z)) x = cam.x; else { x = cam.x; z = cam.z; } }
       return [x, z]; }
     if (RT && DR) {
@@ -6962,6 +6978,7 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
       const g = Math.floor(rnd() * 9), gx = (g % 2 ? 1 : -1) * (56 + (g * 37) % 150), gz = 28 + (g * 23) % 60;
       const x = gx + (rnd() - 0.5) * 30, z = gz + (rnd() - 0.5) * 24; if (Math.abs(x) < 50 && z < 44) continue;
       trees.push([x, z, 6 + rnd() * 1.8, 0.85]); n++; }
+    OUT.treeCols = trees.map(([x, z]) => [x - 0.4, x + 0.4, z - 0.4, z + 0.4]); OUT.colDirty = true;   // trunks are solid (the instanced trees are not seen by the collider scan)
     const LOBES = (i) => i < NBELT && Math.abs(trees[i][0]) < 64 ? 60 : 22;   // the street trees in front of the archive in detail, all the rest lighter
     let NL = 0; trees.forEach((t, i) => { NL += LOBES(i); });
     const barkM = lam(0x66503b), limbM = lam(0x695443);
@@ -8204,7 +8221,7 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
     if (OUT.aptMats) { const nt = 0.08 + 0.95 * (1 - u.uDay.value); for (const m of OUT.aptMats) m.emissiveIntensity = nt; }
     if (OUT.parkGlow) OUT.parkGlow.opacity = 0.22 * Math.max(0, 1 - u.uDay.value * 1.6);
     if (OUT.artGlow) { const n = Math.max(0, 1 - u.uDay.value * 1.5); OUT.artGlow.opacity = 0.32 * n; OUT.artFloorGlow.opacity = 0.85 * n; }
-    if (OUT.artQ && OUT.artQ.length && cam.z < -4) { OUT.artQ.shift()(); renderer.shadowMap.needsUpdate = true; }   // one space a frame, once you are across the road
+    if (OUT.artQ && OUT.artQ.length && cam.z < -4) { OUT.artQ.shift()(); renderer.shadowMap.needsUpdate = true; OUT.colDirty = true; }   // one space a frame, once you are across the road
     if (OUT.artZones) for (const Z of OUT.artZones) { const d = Math.hypot(cam.x - Z.x, cam.z - Z.z), on = (AIR.on || AIR.out) ? true : Z.on ? d < 150 : d < 135; if (on !== Z.on) { Z.on = on; Z.g.visible = on; renderer.shadowMap.needsUpdate = true; } }
     if (OUT.artAnim) { const A = OUT.artAnim, tt = performance.now() / 1000;   // ARTSIS: water jets rising and falling, ripples and the stream moving
       let fb = 0; if (OUT.fBoost > 0) { OUT.fBoost = Math.max(0, OUT.fBoost - dt); const q = 1 - OUT.fBoost / 3.2; fb = Math.sin(Math.PI * Math.min(1, q * 1.15)) ** 0.7; }   // a click: one great surge, then back
@@ -10347,7 +10364,8 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
       if (tr < RI + IWT + 1.2 && Math.abs(wrapAngle(ta - DA)) < IGAP + 1.0 / RI) { goInner(); return; }
     }
     let [x, z] = clampXZ(cam.x + hx * dist, cam.z + hz * dist, m);
-    if (mode === "outside" && Math.hypot(x - cam.x - hx * dist, z - cam.z - hz * dist) > 0.05) for (let dd = dist - 0.3; dd > 0.3; dd -= 0.3) { const tx = cam.x + hx * dd, tz = cam.z + hz * dd, c = clampXZ(tx, tz, m); if (Math.hypot(c[0] - tx, c[1] - tz) < 0.05) { x = c[0]; z = c[1]; break; } }   // blocked ahead: walk as far as the open ground goes
+    if (mode === "outside") { let lx = cam.x, lz = cam.z, ok = true; for (let dd = 0.3; dd <= dist + 1e-6; dd += 0.3) { const tx = cam.x + hx * dd, tz = cam.z + hz * dd, c = clampXZ(tx, tz, m); if (Math.hypot(c[0] - tx, c[1] - tz) > 0.05) { ok = false; break; } lx = tx; lz = tz; }
+      if (!ok) { x = lx; z = lz; } }   // something in the way: walk up to it, never through it
 
     const yaw = Math.atan2(-hx, -hz);
     const moved = Math.hypot(x - cam.x, z - cam.z);
@@ -10560,25 +10578,28 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
     if (!gltfLoader && THREE.GLTFLoader) { gltfLoader = new THREE.GLTFLoader(); if (window.MeshoptDecoder) gltfLoader.setMeshoptDecoder(window.MeshoptDecoder); }
     if (!gltfLoader) { TP.fail = true; return; } TP.loading = true;
     gltfLoader.load("assets/character.glb", (g) => {
-      TP.loading = false; const o = g.scene; o.scale.setScalar(1.2);   // the model stands 1.4 m; a grown-up next to the 1.6 m eye height
-      o.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.frustumCulled = false; } });
+      TP.loading = false; const o = g.scene; o.scale.setScalar(0.96);   // the model stands 1.4 m; shown at 1.35 m
+      // lit like the rest of the street (Lambert, as the park is drawn) rather than PBR without a sky to reflect, so it no longer looks pasted on
+      o.traverse((m) => { if (m.isMesh) { const mp = m.material && m.material.map; m.material = new THREE.MeshLambertMaterial({ map: mp, skinning: true }); m.castShadow = true; m.frustumCulled = false; } });
+      const blob = new THREE.Mesh(new THREE.CircleGeometry(0.42, 24), new THREE.MeshBasicMaterial({ map: canvasTex(64, 64, (c, W, H) => { const gr = c.createRadialGradient(32, 32, 2, 32, 32, 32); gr.addColorStop(0, "rgba(0,0,0,0.55)"); gr.addColorStop(0.6, "rgba(0,0,0,0.25)"); gr.addColorStop(1, "rgba(0,0,0,0)"); c.fillStyle = gr; c.fillRect(0, 0, W, H); }), transparent: true, depthWrite: false }));
+      blob.rotation.x = -Math.PI / 2; blob.renderOrder = 2; TP.blob = blob; blob.visible = false; scene.add(blob);   // a soft contact shadow: the street's shadow map is baked once, so a moving figure needs its own
       TP.obj = o; o.visible = false; scene.add(o); TP.mixer = new THREE.AnimationMixer(o); g.animations.forEach((c) => { TP.act[c.name] = TP.mixer.clipAction(c); });
     }, undefined, (e) => { TP.loading = false; TP.fail = true; tpLabel(); console.error("캐릭터 모형 로딩 실패 (assets/character.glb)", e); });
   }
   function tpStep(dt) {
-    const show = TP.on && mode === "outside" && !AIR.on && !(AIR.p > 0.02) && !THUMB.on && !T3.on && !(typeof SWING !== "undefined" && SWING && SWING.on);
+    const show = TP.on && mode === "outside" && !AIR.on && !(AIR.p > 0.02) && !THUMB.on && !T3.on && !SWING && !HOOP;   // the swing and the hoop game stay first-person
     if (show && !TP.obj) tpLoad();
     TP.k += ((show && TP.obj ? 1 : 0) - TP.k) * Math.min(1, dt * 5); if (TP.k < 0.002) TP.k = 0;
-    if (!TP.obj) return; TP.obj.visible = TP.k > 0.05;
+    if (!TP.obj) return; TP.obj.visible = TP.k > 0.05; TP.blob.visible = TP.obj.visible;
     let mv = Math.hypot(cam.x - TP.px, cam.z - TP.pz) / Math.max(dt, 1e-3); TP.px = cam.x; TP.pz = cam.z; if (mv > 30) mv = 0;   // a jump (entering, aerial return) is not a sprint
     TP.spd += (mv - TP.spd) * Math.min(1, dt * 7);
     if (!TP.obj.visible) return;
-    TP.obj.position.set(cam.x, 0, cam.z); TP.obj.rotation.y = cam.yaw + Math.PI;
+    TP.obj.position.set(cam.x, 0, cam.z); TP.obj.rotation.y = cam.yaw + Math.PI; TP.blob.position.set(cam.x, 0.04, cam.z);
     const W = TP.act.Walking, R = TP.act.Running; if (!W || !R) return;
     if (!TP.started) { TP.started = true; W.play(); R.play(); }
     TP.rw += ((TP.spd > 4.2 ? 1 : 0) - TP.rw) * Math.min(1, dt * 6); W.setEffectiveWeight(1 - TP.rw); R.setEffectiveWeight(TP.rw);
     const moving = TP.spd > 0.3; W.timeScale = moving ? Math.max(0.7, Math.min(1.9, TP.spd / 1.5)) : 0; R.timeScale = Math.max(0.8, Math.min(1.6, TP.spd / 5));
-    if (!moving) W.time += (0.27 - W.time) * Math.min(1, dt * 6);   // standing still: ease the walk cycle to the feet-together frame
+    if (!moving) W.time += (0.53 - W.time) * Math.min(1, dt * 6);   // standing still: ease the walk cycle to the feet-together frame
     TP.mixer.update(dt);
   }
   function tpCamera() {   // after the eye camera is placed: pull it back behind and above the character, shortened where it would end up inside a wall
@@ -10591,7 +10612,7 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
     anim = null; hold = null; if (auto.on) setAuto(false); VK.v = 0;
     AIR.from = { x: cam.x, z: cam.z, y: cam.y, yaw: cam.yaw, pitch: cam.pitch }; AIR.t = 0;
     if (on) { AIR.back = Object.assign({}, AIR.from); AIR.a = 0; AIR.s = 1; AIR.p = 0; AIR.cx = 55; AIR.cz = -82; AIR.on = true; AIR.near = camera.near; camera.near = 1.5; camera.updateProjectionMatrix();   // more depth precision far off, so the ground never shimmers
-      if (OUT.artQ) while (OUT.artQ.length) OUT.artQ.shift()();   // every garden is built before the view opens up
+      if (OUT.artQ) while (OUT.artQ.length) { OUT.artQ.shift()(); OUT.colDirty = true; }   // every garden is built before the view opens up
       if (OUT.artZones) for (const Z of OUT.artZones) { Z.on = true; Z.g.visible = true; } renderer.shadowMap.needsUpdate = true; }
     else { AIR.on = false; AIR.out = true; }
     airBtn();
