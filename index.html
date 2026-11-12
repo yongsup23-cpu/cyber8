@@ -10587,7 +10587,7 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
     if (M && M.parent) M.parent.remove(M);
     let x = -4, z = -63; const T = OUT.treeCols || [];   // right of the playground, nudged off any tree trunk
     for (let k = 0; k < 20; k++) { if (!T.some((w) => Math.abs((w[0] + w[1]) / 2 - x) < 3.6 && Math.abs((w[2] + w[3]) / 2 - z) < 2.6)) break; z -= 1.5; }
-    const g = busModel(TOY, false); g.position.set(x, 0.02, z);   // the one parked by the playground keeps its roof world.add(g); COIN.mini = g;
+    const g = busModel(TOY, false); g.position.set(x, 0.02, z); world.add(g); COIN.mini = g;   // the one parked by the playground keeps its roof
     const lab = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTex(256, 64, (c, W, H) => { c.fillStyle = "rgba(20,22,26,.82)"; c.beginPath(); c.roundRect ? c.roundRect(4, 4, W - 8, H - 8, 26) : c.rect(4, 4, W - 8, H - 8); c.fill(); c.fillStyle = "#ffd36a"; c.font = "800 30px sans-serif"; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText("🏁 버스 레이싱", W / 2, H / 2 + 2); }), transparent: true, depthWrite: false }));
     lab.scale.set(1.8, 0.45, 1); lab.position.set(0, 1.15, 0); g.add(lab); g.userData.lab = lab;
     const pb = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.1, 1.1), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })); pb.position.y = 0.5; pb.userData.idx = "raceBus"; g.add(pb); pickables.push(pb);
@@ -10850,6 +10850,16 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
     anim = null; hold = null; TP.sit = { st, th, cx: st.x + st.fx * 0.25, cz: st.z + st.fz * 0.25 }; cam.x = TP.sit.cx; cam.z = TP.sit.cz; cam.yaw = th; cam.pitch = 0; TP.px = cam.x; TP.pz = cam.z; TP.spd = 0;
     if (typeof taxiToast === "function") { taxiCSS(); taxiToast("벤치에 앉았어요 · 움직이면 일어납니다", 2200); }
   }
+  function tpProfile() {   // 쿠모's card
+    let el = $("kumoCard");
+    if (!el) { const st = document.createElement("style");
+      st.textContent = "#kumoCard{position:fixed;inset:0;z-index:58;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.3)}#kumoCard[hidden]{display:none}#kumoCard .bx{position:relative;width:min(340px,calc(100vw - 32px));background:rgba(20,22,26,.96);border:1px solid rgba(201,168,106,.55);border-radius:16px;padding:20px 22px 18px;color:#e9e1d0;font-family:inherit;box-shadow:0 12px 40px rgba(0,0,0,.5)}#kumoCard h3{margin:0;font-size:24px;color:#ffd36a;letter-spacing:.02em}#kumoCard .en{font-size:12px;color:#c9a86a;margin:2px 0 12px;letter-spacing:.12em}#kumoCard dl{display:grid;grid-template-columns:78px 1fr;gap:7px 10px;margin:0;font-size:13.5px;line-height:1.45}#kumoCard dt{color:#a99c84}#kumoCard dd{margin:0}#kumoCard .x{position:absolute;right:10px;top:8px;background:none;border:0;color:#bfb39b;font-size:20px;cursor:pointer}";
+      document.head.appendChild(st); el = document.createElement("div"); el.id = "kumoCard"; el.setAttribute("role", "dialog");
+      el.innerHTML = '<div class="bx"><button type="button" class="x" aria-label="닫기">×</button><h3>쿠모</h3><div class="en">KU-MHO</div><dl><dt>나이</dt><dd>6살</dd><dt>사는 곳</dt><dd>아테라 타운</dd><dt>좋아하는 것</dt><dd>여행 갈 때 메는 금호고속 버스 가방, 아빠가 준 아테라 티셔츠, 농구</dd><dt>MBTI</dt><dd>ESFP</dd><dt>성격</dt><dd>호기심이 가득하고 새로운 도전을 좋아해요</dd></dl></div>';
+      document.body.appendChild(el); ["pointerdown", "pointerup"].forEach((ev) => el.addEventListener(ev, (e) => e.stopPropagation()));
+      el.addEventListener("click", (e) => { e.stopPropagation(); if (e.target === el || e.target.classList.contains("x")) el.hidden = true; }); }
+    el.hidden = false;
+  }
   function tpHit(px, py) {   // is the pointer on the character? (its screen-space box, from feet to head)
     if (!TP.obj || TP.k < 0.6) return false; const r = canvas.getBoundingClientRect(), v = new THREE.Vector3();
     const sc = (y) => { v.set(cam.x, y, cam.z).project(camera); return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height, v.z]; };
@@ -11028,7 +11038,7 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
     if (!drag) return;
     const d = drag; drag = null;
     if (atEasel) { if (!cancel && d.moved <= 8) enterArchive(); return; }
-    if (d.tp) { canvas.style.cursor = ""; return; }   // turning the character is not a step
+    if (d.tp) { canvas.style.cursor = ""; if (!cancel && d.moved <= 4) tpProfile(); return; }   // turning the character is not a step; a plain click shows who he is
     if (AIR.on || AIR.out) return;   // no walking off from the sky
     if (HOOP && !cancel && d.moved <= 8) { hoopShoot(); return; }   // during the game a click shoots
     if (auto.on) setAuto(false);
