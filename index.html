@@ -10696,6 +10696,44 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
     M.visible = true; M.userData.arrive = { t: 0, x, z, fx: Math.sin(f), fz: Math.cos(f) }; M.rotation.y = f + Math.PI / 2; OUT.colDirty = true;
     taxiToast("🚌 미니버스가 왔어요! 버스를 누르면 탈 수 있어요", 2600);
   }
+  // ===== the big screen in the park: a bronze-framed LED board on two posts, between the ARTERA planting and the fountain, facing the street.
+  // Every 30 s it shows another archive photo at random (the same large image a hall shows on click). One photo in memory at a time.
+  const SCR = { g: null, ph: null, cap: null, t: 0, cur: -1, list: null, tex: null, busy: false };
+  function screenBuild() {   // a square four-sided screen tower far behind the fountain: the same photo on every face, seen from anywhere in the park
+    const F = fountainAt(); if (!F) return false;
+    const g = new THREE.Group(); g.position.set(F.x, 0, F.z - 34); g.scale.setScalar(1.6); world.add(g); SCR.g = g;   // ~19 m a side, its top ~26 m up
+    const bronze = new THREE.MeshLambertMaterial({ color: 0xb59c7a }), steel = gml(0xb9bab6), conc = gml(0xcfccc4), W = 12, H = 7.6, Y = 8.6;
+    const box = (w, h, d, x, y, zz, m) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); o.position.set(x, y, zz); o.castShadow = true; g.add(o); return o; };
+    box(1.7, Y, 1.7, 0, Y / 2, 0, steel); box(3.4, 0.5, 3.4, 0, 0.25, 0, conc); box(2.6, 0.3, 2.6, 0, Y - 0.15, 0, bronze);   // one thick column on a concrete footing
+    box(W, H, W, 0, Y + H / 2, 0, bronze); box(W + 0.4, 0.35, W + 0.4, 0, Y + H + 0.17, 0, bronze); box(W + 0.4, 0.35, W + 0.4, 0, Y - 0.17, 0, bronze);   // the cabinet with top and bottom rims
+    SCR.area = { w: W - 0.9, h: H - 1.45, y: Y + H / 2 + 0.3 };
+    SCR.phM = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0 });
+    SCR.capC = document.createElement("canvas"); SCR.capC.width = 1024; SCR.capC.height = 64; SCR.capT = new THREE.CanvasTexture(SCR.capC); SCR.capT.encoding = THREE.sRGBEncoding;
+    const capM = new THREE.MeshBasicMaterial({ map: SCR.capT, transparent: true }), faceM = new THREE.MeshBasicMaterial({ color: 0x0c0d0f }), d = W / 2 + 0.01; SCR.ph = [];
+    for (let k = 0; k < 4; k++) {   // front, right, back, left
+      const f = new THREE.Group(); f.rotation.y = k * Math.PI / 2; g.add(f);
+      const face = new THREE.Mesh(new THREE.PlaneGeometry(W - 0.6, H - 0.6), faceM); face.position.set(0, Y + H / 2, d); f.add(face);
+      const ph = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), SCR.phM); ph.position.set(0, SCR.area.y, d + 0.01); f.add(ph); SCR.ph.push(ph);
+      const cap = new THREE.Mesh(new THREE.PlaneGeometry(W - 0.9, (W - 0.9) / 16), capM); cap.position.set(0, Y + 0.72, d + 0.01); f.add(cap);
+    }
+    SCR.list = DATA.flatMap((h, hi) => h.items.filter((it) => it.file && !/\.(mp4|webm|mov)$/i.test(it.file)).map((it) => [it, hi])); SCR.t = 0; screenNext(); OUT.colDirty = true; return true;
+  }
+  function screenNext() {
+    if (!SCR.list || !SCR.list.length || SCR.busy) return; let k = Math.floor(Math.random() * SCR.list.length); if (k === SCR.cur) k = (k + 1) % SCR.list.length; SCR.cur = k;
+    const [it, hi] = SCR.list[k], g = SCR.g; SCR.busy = true;
+    photoSrc(it.file).then((src) => new Promise((res, rej) => texLoader.load(src, res, undefined, rej))).then((t) => {
+      SCR.busy = false; if (SCR.g !== g || !g.parent) { t.dispose(); return; } t.encoding = THREE.sRGBEncoding; t.anisotropy = ANISO;
+      const A = SCR.area, ar = (t.image && t.image.width / t.image.height) || it.ar || 1.5; let w = A.w, h = w / ar; if (h > A.h) { h = A.h; w = h * ar; }
+      const m = SCR.phM, old = m.map; m.map = t; m.opacity = 0; m.needsUpdate = true; for (const ph of SCR.ph) ph.scale.set(w, h, 1); SCR.fade = 0; if (old) old.dispose();
+      const c = SCR.capC.getContext("2d"); c.clearRect(0, 0, 1024, 64); c.fillStyle = "#e8c98c"; c.font = `700 30px ${FONT}`; c.textBaseline = "middle"; c.textAlign = "center";
+      c.fillText(`${it.year ? it.year + "  ·  " : ""}${it.title || ""}  ·  ${HL(hi)}`, 512, 34); SCR.capT.needsUpdate = true;
+    }).catch(() => { SCR.busy = false; });
+  }
+  function screenStep(dt) {
+    if (mode !== "outside") return; if (!SCR.g || SCR.g.parent !== world) { if (!screenBuild()) return; }
+    SCR.t += dt; if (SCR.t >= 30) { SCR.t = 0; screenNext(); }
+    if (SCR.fade != null && SCR.fade < 1) { SCR.fade = Math.min(1, SCR.fade + dt * 1.5); SCR.phM.opacity = SCR.fade; }
+  }
   function busCallStep(dt) {
     const show = mode === "outside" && busUnlocked() && !RIDE.on && !AIR.on && !THUMB.on; if (show || $("busCall")) { const b = busCallBtn(); if (b.hidden === show) b.hidden = !show; }
     const M = COIN.mini, A = M && M.userData.arrive; if (!A) return; A.t += dt; const u = Math.min(1, A.t / 1.1), e = 1 - (1 - u) * (1 - u) * (1 - u);   // drives in from behind and pulls up alongside
@@ -10835,7 +10873,7 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
     TP.obj.position.set(cam.x, gy + 0.012, cam.z); TP.obj.rotation.y = TP.face; TP.blob.position.set(cam.x, gy + 0.02, cam.z);   // feet on whatever surface is underfoot
     if (TP.sit) { const S = TP.sit, th = S.th; TP.obj.rotation.y = th; TP.obj.position.set(S.st.x + Math.sin(th) * 0.27 - Math.cos(th) * 0.1, S.st.top - 0.33, S.st.z + Math.cos(th) * 0.27 + Math.sin(th) * 0.1); TP.blob.visible = false; }   // the clip sits the hips 0.27 m behind and 0.1 m beside the feet
     if (RIDE.on) rideRider();
-    const W = TP.act.Walking, R = TP.act.Running, I = TP.act.Idle, Sa = TP.act.Sit, Dn = TP.act.Dance; if (!W || !R) return;
+    const W = TP.act.Walking, R = TP.act.Running, I = TP.act.Idle, Sa = TP.act.Sit, Dn = null; if (!W || !R) return;   // no dancing: standing still keeps the standing pose
     if (!TP.started) { TP.started = true; W.play(); R.play(); if (I) I.play(); if (Sa) Sa.play(); if (Dn) Dn.play(); }
     const seated = !!(TP.sit || RIDE.on);
     if (Sa) Sa.setEffectiveWeight(seated ? 1 : 0); if (seated) { W.setEffectiveWeight(0); R.setEffectiveWeight(0); if (I) I.setEffectiveWeight(0); if (Dn) Dn.setEffectiveWeight(0); TP.idleT = 0; TP.dw = 0; TP.mixer.update(dt); return; }
@@ -11311,7 +11349,7 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
   camera.rotation.order = "YXZ";
   function frame(now) {
     const dt = Math.min(0.05, lastNow ? (now - lastNow) / 1000 : 0.016); lastNow = now;
-    stepHold(dt); stepTilt(dt); stepVK(dt); stepAir(dt); stepHoop(dt); stepSwing(dt); stepThumbs(dt); stepCoins(dt); busCallStep(dt); tpStep(dt); placeVK();
+    stepHold(dt); stepTilt(dt); stepVK(dt); stepAir(dt); stepHoop(dt); stepSwing(dt); stepThumbs(dt); stepCoins(dt); busCallStep(dt); screenStep(dt); tpStep(dt); placeVK();
     const taxiControls = document.getElementById("taxiControls");
     taxiControls.hidden = true;
     if (mode === "lobby" && CAR.lights && CAR.lights.length) {   // uplights round the dais: a soft, uneven twinkle
