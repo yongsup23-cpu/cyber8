@@ -4664,7 +4664,9 @@ window.MeshoptDecoder=MeshoptDecoder;</script>
       const m = Array.isArray(o.material) ? o.material[0] : o.material; if (m && m.transparent && m.opacity < 0.5) return; if (!visible(o)) return;
       if (!o.geometry.boundingBox) o.geometry.computeBoundingBox(); bb.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld);
       const w = bb.max.x - bb.min.x, d = bb.max.z - bb.min.z; if (bb.max.y < 0.4 || bb.min.y > 1.9) return;
-      if (!(Math.max(w, d) < 14 || (Math.min(w, d) < 0.9 && Math.max(w, d) < 60))) return; if (w * d > 120) return;
+      let inU = false; for (let q = o.parent; q; q = q.parent) if (q === OUT.uGroup) { inU = true; break; } if (inU && Math.max(w, d) >= 6) return;   // U-square's merged batches: its walk limits are drawn by hand
+      const bldg = bb.min.y < 0.6 && bb.max.y > 3 && Math.max(w, d) < 60 && o.geometry.attributes.position.count <= 400;   // a building (a few boxes, not a merged batch): stop at its walls
+      if (!bldg) { if (!(Math.max(w, d) < 14 || (Math.min(w, d) < 0.9 && Math.max(w, d) < 60))) return; if (w * d > 120) return; }
       L.push([bb.min.x, bb.max.x, bb.min.z, bb.max.z]); });
     const G = new Map(); L.forEach((w) => { for (let i = Math.floor((w[0] - 0.3) / 8); i <= Math.floor((w[1] + 0.3) / 8); i++) for (let j = Math.floor((w[2] - 0.3) / 8); j <= Math.floor((w[3] + 0.3) / 8); j++) { const k = i + "," + j; if (!G.has(k)) G.set(k, []); G.get(k).push(w); } });
     OUT.colGrid = G; OUT.colN = L.length;
@@ -4672,16 +4674,37 @@ window.MeshoptDecoder=MeshoptDecoder;</script>
       if (!o.geometry.boundingBox) o.geometry.computeBoundingBox(); bb.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld); if (bb.min.y < 0.3 && (bb.max.x - bb.min.x) * (bb.max.z - bb.min.z) > 1.5) GL.push([o, bb.min.x, bb.max.x, bb.min.z, bb.max.z]); });
     OUT.groundList = GL;   // floors, paving and lawns: what the character stands on
   }
+  // where you can walk outside: from the convenience-store row on the left to U-square on the right, from the lawn behind the archive to the
+  // Artera blocks at the back; buildings and furniture stop you by their own outlines (colBuild). Cut out: the archive building itself,
+  // U-square's shop ring, its street wing and the coach yard (all drawn as one merged mesh, so they have no outline of their own).
+  function groundOK(a, b) {
+    if (a < -112 || a > 300 || b < -170 || b > 44) return false;
+    if (a > -34 && a < 34 && b > HZ - 0.9) return false;   // the archive
+    const dx = a - 240, dz = b + 36, r2 = dx * dx + dz * dz; if (b <= -29 && r2 > 21.3 * 21.3 && r2 < 40 * 40) return false;   // U-square's ring of shops
+    if (a > 283 && a < 297 && b > -37 && b < -7) return false;   // its low wing on the street
+    if (a > 184 && a < 302 && b > -105 && b < -73) return false;   // the coach yard behind it
+    return true;
+  }
+  // U-square's stair (5 m wide, rising 8 m over 12 m toward the back) and the first-floor gallery round the shop fronts at 4.2 m, reached from
+  // the stair half way up by a bridge on either side. Returns the floor height at (a, b) nearest to the height you are at, or null.
+  function floorAt(a, b, cur) {
+    const dx = a - 240, dz = b + 36, r = Math.hypot(dx, dz), C = [];
+    const onStair = Math.abs(dx) <= 2.2 && b <= -49.4 && b >= -63.6;
+    if (onStair) C.push(b >= -61.4 ? Math.min(8, (-49.4 - b) * (8 / 12)) : 8.15);
+    else { if (groundOK(a, b)) C.push(0);
+      if ((r >= 22.9 && r <= 25.8 && b <= -30) || (Math.abs(dx) >= 2.15 && Math.abs(dx) <= 6.5 && b <= -54.9 && b >= -59.5)) C.push(4.2); }
+    let best = null, bd = 0.75; for (const c of C) { const d = Math.abs(c - cur); if (d <= bd) { bd = d; best = c; } } return best;
+  }
   function clampXZ(x, z, m) {
     if (mode === "outside") {   // across the road and on past the trees; the bus shelter's glass is solid
-      const okA = (a, b) => (a >= -58 && a <= 58 && b >= -60 && b <= HZ - 0.9) || (a >= -44 && a <= 150 && b <= -14 && b >= -162) || (a >= -58 && a <= 300 && b >= -15 && b <= 9 && (a <= 150 || b >= -12)) || ((a - 240) * (a - 240) + (b + 36) * (b + 36) < 441 && b <= -11 && a >= 228) || (a >= 228 && a <= 260 && b <= -11 && b >= -20);   // the street, the park, the walk down the street and into U-square's plaza   // the street, and the whole of the ARTSIS park
+      const okA = (a, b) => floorAt(a, b, cam.fy || 0) != null;   // walkable at a height within a step of where you stand (ground, U-square stair, its first-floor gallery)
       if (!okA(x, z)) { if (okA(x, cam.z)) z = cam.z; else if (okA(cam.x, z)) x = cam.x; else if (okA(cam.x, cam.z)) { x = cam.x; z = cam.z; }
         else { let f = null; for (let r = 0.25; r <= 16 && !f; r += 0.25) for (let k = 0; k < 24; k++) { const a = k / 24 * Math.PI * 2, px = x + Math.cos(a) * r, pz = z + Math.sin(a) * r; if (okA(px, pz)) { f = [px, pz]; break; } }   // off the walkable ground: step to the nearest walkable spot, never a jump across the map
           if (f) { x = f[0]; z = f[1]; } else { x = Math.max(-58, Math.min(58, x)); z = Math.max(-60, Math.min(HZ - 0.9, z)); } } }
       if (OUT.colDirty) colBuild(); const G = OUT.colGrid;
       const inB = (w, a, b) => a > w[0] - 0.3 && a < w[1] + 0.3 && b > w[2] - 0.3 && b < w[3] + 0.3;
       const hit = (a, b) => (OUT.walls || []).some((w) => inB(w, a, b)) || !!(OUT.mazeHit && OUT.mazeHit(a, b)) || !!(G && (G.get(Math.floor(a / 8) + "," + Math.floor(b / 8)) || []).some((w) => inB(w, a, b)));
-      if (hit(x, z) && !hit(cam.x, cam.z)) { if (!hit(x, cam.z)) z = cam.z; else if (!hit(cam.x, z)) x = cam.x; else { x = cam.x; z = cam.z; } }
+      if ((cam.fy || 0) < 1 && hit(x, z) && !hit(cam.x, cam.z)) { if (!hit(x, cam.z)) z = cam.z; else if (!hit(cam.x, z)) x = cam.x; else { x = cam.x; z = cam.z; } }   // things on the ground only stop you on the ground
       return [x, z]; }
     if (RT && DR) {
       let r = Math.hypot(x, z); const lim = RR - BARRIER - 0.45, lo = RI + IWT + 0.6, hp = RI - IWT - BARRIER - 0.45;
@@ -7944,7 +7967,7 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
           kill.forEach((m) => { m.parent.remove(m); m.geometry.dispose(); });
           B.forEach((b, mt) => { const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(b.p, 3)); g.setAttribute("normal", new THREE.Float32BufferAttribute(b.n, 3)); g.setAttribute("uv", new THREE.Float32BufferAttribute(b.u, 2));
             const m = new THREE.Mesh(g, mt); m.castShadow = !mt.transparent; m.receiveShadow = true; U.add(m); }); };
-        const U = new THREE.Group(); world.add(U); const CX = 240, CZ = -36, RI = 26, RO = 38;   // two city blocks joined into one site (the cross street between them closed)   // just past the right-hand Artera, inside the ring of hills round the scene
+        const U = new THREE.Group(); world.add(U); OUT.uGroup = U; const CX = 240, CZ = -36, RI = 26, RO = 38;   // two city blocks joined into one site (the cross street between them closed)   // just past the right-hand Artera, inside the ring of hills round the scene
         const pv = canvasTex(256, 256, (g) => { g.fillStyle = "#c9c4b9"; g.fillRect(0, 0, 256, 256); g.fillStyle = "#bdb7ab"; for (let y = 0; y < 256; y += 32) for (let x = (y / 32) % 2 ? 16 : 0; x < 256; x += 32) g.fillRect(x, y, 16, 16); g.strokeStyle = "rgba(0,0,0,0.10)"; g.lineWidth = 2; for (let i = 0; i <= 256; i += 32) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i, 256); g.moveTo(0, i); g.lineTo(256, i); g.stroke(); } });
         pv.wrapS = pv.wrapT = THREE.RepeatWrapping; pv.repeat.set(16, 12); pv.anisotropy = ANISO;
         const kerbM = lam(0xbdb8ad), base = new THREE.Mesh(new THREE.BoxGeometry(132, 0.2, 96), [kerbM, kerbM, new THREE.MeshLambertMaterial({ map: pv }), kerbM, kerbM, kerbM]); base.position.set(240, 0.1, -60); base.receiveShadow = true; U.add(base);
@@ -7978,6 +8001,15 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
         ring(RI, RO, 8, 0, Math.PI - 0.22, Math.PI * 2 + 0.22, 44, shopMs, 4.2, 0.05);
         ring(RI + 5, RO - 1, 5.5, 8.6, Math.PI + 0.06, Math.PI * 2 - 0.06, 34, bandM, 2.2, 0.04);
         for (let i = 0; i <= 30; i++) { const a = Math.PI - 0.18 + (Math.PI + 0.36) * i / 30; ub(0.5, 8, 0.5, CX + Math.cos(a) * (RI - 3.6), 4, CZ + Math.sin(a) * (RI - 3.6), white); }   // the colonnade under the eaves
+        { // the first-floor gallery: a walkway at 4.2 m along the shop fronts, behind the colonnade, glass-railed; bridges from the stair landing half way up
+          const GY = 4.2, r0 = 22.7, r1 = RI, aS = -(Math.PI * 2 + 0.2), aL = Math.PI + 0.4, deckM = new THREE.MeshLambertMaterial({ color: 0xe9e7e2, side: THREE.DoubleSide }), glassM = new THREE.MeshLambertMaterial({ color: 0xcfe3ea, transparent: true, opacity: 0.38, side: THREE.DoubleSide }), railM2 = lam(0xb9bcc0);
+          const top = new THREE.Mesh(new THREE.RingGeometry(r0, r1, 72, 1, aS, aL), deckM); top.rotation.x = -Math.PI / 2; top.position.set(CX, GY, CZ); U.add(top);
+          const edge = new THREE.Mesh(new THREE.CylinderGeometry(r0, r0, 0.25, 72, 1, true, -1.5 * Math.PI - 0.2, Math.PI + 0.4), deckM); edge.position.set(CX, GY - 0.125, CZ); U.add(edge);
+          for (const [f, t] of [[Math.PI - 0.2, Math.PI * 1.5 - 0.3], [Math.PI * 1.5 + 0.3, Math.PI * 2 + 0.2]]) {   // the glass rail on the plaza side, open where the stair and the bridges come in
+            const gl = new THREE.Mesh(new THREE.CylinderGeometry(r0 + 0.05, r0 + 0.05, 1.05, 36, 1, true, Math.PI / 2 - t, t - f), glassM); gl.position.set(CX, GY + 0.53, CZ); U.add(gl);
+            const hr = new THREE.Mesh(new THREE.CylinderGeometry(r0 + 0.05, r0 + 0.05, 0.06, 36, 1, true, Math.PI / 2 - t, t - f), railM2); hr.position.set(CX, GY + 1.08, CZ); U.add(hr); }
+          for (const d of [-1, 1]) { const bx = CX + d * 4.4, bz = -57.2;   // bridge from the stair to the gallery
+            ub(4.3, 0.25, 4.6, bx, GY - 0.125, bz, deckM); ub(0.06, 1.05, 4.6, CX + d * 6.5, GY + 0.53, bz, glassM); ub(4.3, 1.05, 0.06, bx, GY + 0.53, -54.9, glassM); ub(4.3, 0.06, 0.06, bx, GY + 1.08, -54.9, railM2); ub(0.06, 0.06, 4.6, CX + d * 6.5, GY + 1.08, bz, railM2); } }
         for (let i = 0; i < 9; i++) { const a = Math.PI + 0.3 + i * 0.33; ub(3 + (i % 3), 1.6, 2.6, CX + Math.cos(a) * (RO - 3), 15.6, CZ + Math.sin(a) * (RO - 3), lam(0xd5d4d0), -a); }   // plant on the roof
         // the oval sign drum on the roof at the back, facing the street: U·square 유·스퀘어 wrapped round its front
         const sT = canvasTex(2048, 300, (g, W, H) => { g.fillStyle = "#f7f7f5"; g.fillRect(0, 0, W, H); g.lineCap = "round";
@@ -10740,7 +10772,7 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
     if (mv > 0.6 && !TP.sit) TP.face += wrapAngle(Math.atan2(dx, dz) - TP.face) * Math.min(1, dt * 10);   // face the way you go: stepping back turns round
     else if (TP.lastYaw != null && Math.abs(wrapAngle(cam.yaw - TP.lastYaw)) > 1e-4 && !TP.sit && !TP.dragging) TP.face += wrapAngle(cam.yaw + Math.PI - TP.face) * Math.min(1, dt * 10);   // turning on the spot: turn with the view
     TP.lastYaw = cam.yaw; TP.face = wrapAngle(TP.face);
-    TP.gt = (TP.gt || 0) - dt; if (TP.gt <= 0) { TP.gt = 0.15; TP.gy = tpGround(cam.x, cam.z); }
+    TP.gt = (TP.gt || 0) - dt; if (TP.gt <= 0) { TP.gt = 0.15; TP.gy0 = tpGround(cam.x, cam.z); } TP.gy = (cam.fyS || 0) > 0.3 ? cam.fyS : TP.gy0 || 0;   // up the U-square stair or on its gallery, the floor is known
     TP.obj.visible = vis; if (TP.stand) TP.stand.visible = false;
     if (!vis) return;
     if (TP.sit) { const S = TP.sit; if (anim || hold || Math.hypot(cam.x - S.cx, cam.z - S.cz) > 0.04 || !TP.on || RIDE.on) { TP.sit = null; if (!anim && !hold) { cam.x = S.st.x + S.st.fx * 1.1; cam.z = S.st.z + S.st.fz * 1.1; } TP.px = cam.x; TP.pz = cam.z; TP.face = S.th; }   // any step gets up
@@ -10749,17 +10781,18 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
     TP.obj.position.set(cam.x, gy + 0.012, cam.z); TP.obj.rotation.y = TP.face; TP.blob.position.set(cam.x, gy + 0.02, cam.z);   // feet on whatever surface is underfoot
     if (TP.sit) { const S = TP.sit, th = S.th; TP.obj.rotation.y = th; TP.obj.position.set(S.st.x + Math.sin(th) * 0.27 - Math.cos(th) * 0.1, S.st.top - 0.33, S.st.z + Math.cos(th) * 0.27 + Math.sin(th) * 0.1); TP.blob.visible = false; }   // the clip sits the hips 0.27 m behind and 0.1 m beside the feet
     if (RIDE.on) rideRider();
-    const W = TP.act.Walking, R = TP.act.Running, I = TP.act.Idle, Sa = TP.act.Sit, Dn = TP.act.Dance; if (!W || !R) return;
+    const W = TP.act.Walking, R = TP.act.Running, I = TP.act.Idle, Sa = TP.act.Sit, Dn = TP.act.Floor; if (!W || !R) return;
     if (!TP.started) { TP.started = true; W.play(); R.play(); if (I) I.play(); if (Sa) Sa.play(); if (Dn) Dn.play(); }
     const seated = !!(TP.sit || RIDE.on);
     if (Sa) Sa.setEffectiveWeight(seated ? 1 : 0); if (seated) { W.setEffectiveWeight(0); R.setEffectiveWeight(0); if (I) I.setEffectiveWeight(0); if (Dn) Dn.setEffectiveWeight(0); TP.idleT = 0; TP.dw = 0; TP.mixer.update(dt); return; }
     const moving = TP.spd > 0.3; TP.iw = (TP.iw == null ? 1 : TP.iw) + ((moving || !I ? 0 : 1) - (TP.iw == null ? 1 : TP.iw)) * Math.min(1, dt * 8);   // standing: the model's own standing pose (shirt logo and bag picture flat and sharp)
-    TP.idleT = moving || TP.dragging ? 0 : (TP.idleT || 0) + dt;   // left standing a few seconds, 쿠모 starts to dance
-    if (Dn) { const want = TP.idleT > 3.5 ? 1 : 0; if (want && !(TP.dw > 0.01)) Dn.time = 0; TP.dw = (TP.dw || 0) + (want - (TP.dw || 0)) * Math.min(1, dt * (want ? 2.5 : 9)); Dn.setEffectiveWeight(TP.dw); }
+    TP.idleT = moving || TP.dragging ? 0 : (TP.idleT || 0) + dt;   // left standing a few seconds, 쿠모 sits down on the ground, legs out in front
+    if (Dn) { const want = TP.idleT > 3.5 ? 1 : 0; TP.dw = (TP.dw || 0) + (want - (TP.dw || 0)) * Math.min(1, dt * (want ? 1.6 : 8)); Dn.setEffectiveWeight(TP.dw); }
     const dw = Dn ? TP.dw : 0;
     TP.rw += ((TP.spd > 4.2 ? 1 : 0) - TP.rw) * Math.min(1, dt * 6); W.setEffectiveWeight((1 - TP.rw) * (1 - TP.iw)); R.setEffectiveWeight(TP.rw * (1 - TP.iw)); if (I) I.setEffectiveWeight(TP.iw * (1 - dw));
     W.timeScale = moving ? Math.max(0.7, Math.min(1.9, TP.spd / 1.5)) : 0.3; R.timeScale = Math.max(0.8, Math.min(1.6, TP.spd / 5));
     TP.mixer.update(dt);
+    if (Dn && TP.dw > 0.01) { const k = 1 - TP.dw; for (const n of ["LeftLeg", "RightLeg", "LeftFoot", "RightFoot"]) { const bn = TP.obj.getObjectByName(n); if (bn) bn.rotation.x *= k; } }   // the clip sits cross-legged: straighten knees and feet so the legs stretch out
   }
   // seats: a click on a bench sits the character down on it (third person: seen from the front; first person: eye at sitting height)
   function seatAdd(x, z, top, fx, fz) {   // seat centre, seat-top height, the way a sitter faces
@@ -11289,7 +11322,9 @@ body.kioskOn .look{position:fixed!important;right:16px;bottom:16px;top:auto!impo
       }
     }
     if (now - hiTimer > 1500) { hiTimer = now; if (looked) refreshHiRes(); }
-    camera.position.set(cam.x, cam.y, cam.z);
+    if (mode === "outside") { const f = floorAt(cam.x, cam.z, cam.fy || 0); cam.fy = f == null ? (groundOK(cam.x, cam.z) ? 0 : (cam.fy || 0)) : f; } else cam.fy = 0;
+    cam.fyS = (cam.fyS || 0) + ((cam.fy || 0) - (cam.fyS || 0)) * Math.min(1, dt * 12);
+    camera.position.set(cam.x, cam.y + cam.fyS, cam.z);
     if (gyro.on || Math.abs(gyro.yaw) + Math.abs(gyro.pitch) > 1e-4) {
       gyro.yaw += wrapAngle(Math.max(-TURN_DEAD, Math.min(TURN_DEAD, gyro.ty)) - gyro.yaw) * 0.22; gyro.pitch += (Math.max(-TILT_LOOK, Math.min(TILT_LOOK + 0.12, gyro.tp)) - gyro.pitch) * 0.22;
     }
